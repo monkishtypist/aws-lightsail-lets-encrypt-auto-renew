@@ -2,24 +2,17 @@ import os
 import boto3
 import paramiko
 import logging
+import time
+from io import StringIO
 
-# Setup logging
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 
-def get_environment_secrets():
-    """Retrieve secrets from environment variables."""
-    return {
-        "host": os.getenv("LIGHTSAIL_HOST"),
-        "user": os.getenv("LIGHTSAIL_USER"),
-        "private_key": os.getenv("LIGHTSAIL_PRIVATE_KEY"),
-        "hosted_zone_id": os.getenv("ROUTE53_HOSTED_ZONE_ID"),
-    }
-
 def update_route53(domain, txt_name, txt_value, hosted_zone_id):
-    """Update TXT record for domain validation."""
+    """Update Route 53 DNS TXT record."""
+    logger.info(f"Updating Route 53 for domain {domain} with TXT {txt_name} = {txt_value}")
     route53 = boto3.client('route53')
-    logger.info(f"Updating Route 53 for {domain} with TXT {txt_name} = {txt_value}")
     response = route53.change_resource_record_sets(
         HostedZoneId=hosted_zone_id,
         ChangeBatch={
@@ -39,52 +32,52 @@ def update_route53(domain, txt_name, txt_value, hosted_zone_id):
     return response
 
 def ssh_command(host, username, private_key, command):
-    """Execute a command on the Lightsail instance via SSH."""
-    logger.info(f"Connecting to {host} via SSH to run: {command}")
+    """Run a command on the Lightsail instance via SSH."""
+    logger.info(f"Running SSH command: {command}")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    key = paramiko.RSAKey.from_private_key_string(private_key)
-    ssh.connect(host, username=username, pkey=key)
+    key = paramiko.RSAKey.from_private_key(StringIO(private_key))
+    ssh.connect(hostname=host, username=username, pkey=key)
     stdin, stdout, stderr = ssh.exec_command(command)
     return stdout.read().decode(), stderr.read().decode()
 
-def renew_certificate():
-    """Main process to renew Let's Encrypt certificate."""
-    secrets = get_environment_secrets()
-    ssh_host = secrets["host"]
-    ssh_user = secrets["user"]
-    private_key = secrets["private_key"]
-    hosted_zone_id = secrets["hosted_zone_id"]
+def main():
+    # Retrieve secrets from environment variables
+    lightsail_host = os.getenv("LIGHTSAIL_HOST")
+    lightsail_user = os.getenv("LIGHTSAIL_USER")
+    lightsail_private_key = os.getenv("LIGHTSAIL_PRIVATE_KEY")
+    hosted_zone_id = os.getenv("ROUTE53_HOSTED_ZONE_ID")
 
     # Certbot command for DNS challenge
-    certbot_command = "sudo certbot certonly --manual --preferred-challenges dns"
+    certbot_command = "sudo certbot certonly --manual --preferred-challenges dns --manual-auth-hook '/path/to/hook-script.sh'"
 
-    # Run certbot on Lightsail instance
-    stdout, stderr = ssh_command(ssh_host, ssh_user, private_key, certbot_command)
-    logger.info(f"Certbot output: {stdout}")
-    if stderr:
-        logger.error(f"Certbot error: {stderr}")
+    # Run Certbot to initiate challenge
+    logger.info("Starting Let's Encrypt certificate request...")
+    stdout, stderr = ssh_command(lightsail_host, lightsail_user, lightsail_private_key, certbot_command)
 
-    # Extract DNS challenge details (mocked for now)
+    # Mock extracting DNS challenge values (adjust based on Certbot's output)
     domain = "example.com"
     txt_name = "_acme-challenge.example.com"
-    txt_value = "sample-value"
+    txt_value = "mock-txt-value"
 
-    # Update Route 53 with the TXT record
+    # Update Route 53 with DNS challenge
     update_route53(domain, txt_name, txt_value, hosted_zone_id)
 
     # Wait for DNS propagation
     logger.info("Waiting for DNS propagation...")
-    time.sleep(300)  # 5 minutes
+    time.sleep(300)  # Wait 5 minutes
 
-    # Complete the challenge (rerun certbot)
+    # Complete the Certbot process
+    logger.info("Completing Certbot process...")
     complete_command = "sudo certbot renew"
-    stdout, stderr = ssh_command(ssh_host, ssh_user, private_key, complete_command)
-    logger.info(f"Renewal output: {stdout}")
+    stdout, stderr = ssh_command(lightsail_host, lightsail_user, lightsail_private_key, complete_command)
+
+    if stdout:
+        logger.info(f"Certbot output: {stdout}")
     if stderr:
-        logger.error(f"Renewal error: {stderr}")
+        logger.error(f"Certbot error: {stderr}")
 
     logger.info("Certificate renewal complete!")
 
 if __name__ == "__main__":
-    renew_certificate()
+    main()
