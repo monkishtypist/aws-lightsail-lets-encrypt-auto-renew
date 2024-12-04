@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+.env/
+
+# Secrets and configuration files
+*.pem
+*.key
+*.crt
+
+# Python egg metadata
+*.egg-info/
+.eggs/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# GitHub Actions cache
+.github/workflows/*.log
+
+# AWS CLI or boto3 configuration
+.aws/
