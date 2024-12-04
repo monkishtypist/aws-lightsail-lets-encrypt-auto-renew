@@ -1,35 +1,11 @@
 import os
-import boto3
 import paramiko
 import logging
-import time
 from io import StringIO
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
-
-def update_route53(domain, txt_name, txt_value, hosted_zone_id):
-    """Update Route 53 DNS TXT record."""
-    logger.info(f"Updating Route 53 for domain {domain} with TXT {txt_name} = {txt_value}")
-    route53 = boto3.client('route53')
-    response = route53.change_resource_record_sets(
-        HostedZoneId=hosted_zone_id,
-        ChangeBatch={
-            'Changes': [
-                {
-                    'Action': 'UPSERT',
-                    'ResourceRecordSet': {
-                        'Name': txt_name,
-                        'Type': 'TXT',
-                        'TTL': 60,
-                        'ResourceRecords': [{'Value': f'"{txt_value}"'}],
-                    }
-                }
-            ]
-        }
-    )
-    return response
 
 def ssh_command(host, username, private_key, command):
     """Run a command on the Lightsail instance via SSH."""
@@ -41,43 +17,44 @@ def ssh_command(host, username, private_key, command):
     stdin, stdout, stderr = ssh.exec_command(command)
     return stdout.read().decode(), stderr.read().decode()
 
+def parse_final_certbot_output(output):
+    """Extract final certificate details from Certbot output."""
+    lines = output.splitlines()
+    cert_paths = []
+    for line in lines:
+        if "Your certificate and chain have been saved at:" in line:
+            cert_path = line.split(":")[1].strip()
+            cert_paths.append(cert_path)
+    return cert_paths
+
 def main():
     # Retrieve secrets from environment variables
     lightsail_host = os.getenv("LIGHTSAIL_HOST")
     lightsail_user = os.getenv("LIGHTSAIL_USER")
     lightsail_private_key = os.getenv("LIGHTSAIL_PRIVATE_KEY")
-    hosted_zone_id = os.getenv("ROUTE53_HOSTED_ZONE_ID")
 
-    # Certbot command for DNS challenge
-    certbot_command = "sudo certbot certonly --manual --preferred-challenges dns --manual-auth-hook '/path/to/hook-script.sh'"
+    # Certbot command for non-interactive renewal
+    certbot_command = "sudo certbot renew --non-interactive"
 
-    # Run Certbot to initiate challenge
-    logger.info("Starting Let's Encrypt certificate request...")
+    # Run Certbot for renewal
+    logger.info("Starting Let's Encrypt certificate renewal...")
     stdout, stderr = ssh_command(lightsail_host, lightsail_user, lightsail_private_key, certbot_command)
 
-    # Mock extracting DNS challenge values (adjust based on Certbot's output)
-    domain = "example.com"
-    txt_name = "_acme-challenge.example.com"
-    txt_value = "mock-txt-value"
+    # Log Certbot output
+    logger.info(f"Certbot stdout:\n{stdout}")
+    logger.error(f"Certbot stderr:\n{stderr}")
 
-    # Update Route 53 with DNS challenge
-    update_route53(domain, txt_name, txt_value, hosted_zone_id)
+    # Parse Certbot output to extract renewed certificate paths
+    logger.info("Parsing final Certbot output...")
+    cert_paths = parse_final_certbot_output(stdout)
 
-    # Wait for DNS propagation
-    logger.info("Waiting for DNS propagation...")
-    time.sleep(300)  # Wait 5 minutes
+    if cert_paths:
+        for path in cert_paths:
+            logger.info(f"Certificate renewed and saved at: {path}")
+    else:
+        logger.warning("No certificates were renewed.")
 
-    # Complete the Certbot process
-    logger.info("Completing Certbot process...")
-    complete_command = "sudo certbot renew"
-    stdout, stderr = ssh_command(lightsail_host, lightsail_user, lightsail_private_key, complete_command)
-
-    if stdout:
-        logger.info(f"Certbot output: {stdout}")
-    if stderr:
-        logger.error(f"Certbot error: {stderr}")
-
-    logger.info("Certificate renewal complete!")
+    logger.info("Certificate renewal process complete!")
 
 if __name__ == "__main__":
     main()
