@@ -1,26 +1,25 @@
+import os
 import boto3
 import paramiko
-import os
-import time
 import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 
-# AWS Clients
-route53 = boto3.client('route53')
-secretsmanager = boto3.client('secretsmanager')
+def get_environment_secrets():
+    """Retrieve secrets from environment variables."""
+    return {
+        "host": os.getenv("LIGHTSAIL_HOST"),
+        "user": os.getenv("LIGHTSAIL_USER"),
+        "private_key": os.getenv("LIGHTSAIL_PRIVATE_KEY"),
+        "hosted_zone_id": os.getenv("ROUTE53_HOSTED_ZONE_ID"),
+    }
 
-def get_secret(secret_name):
-    """Retrieve a secret from AWS Secrets Manager."""
-    response = secretsmanager.get_secret_value(SecretId=secret_name)
-    return response['SecretString']
-
-def update_route53(domain, txt_name, txt_value):
+def update_route53(domain, txt_name, txt_value, hosted_zone_id):
     """Update TXT record for domain validation."""
+    route53 = boto3.client('route53')
     logger.info(f"Updating Route 53 for {domain} with TXT {txt_name} = {txt_value}")
-    hosted_zone_id = os.environ['ROUTE53_HOSTED_ZONE_ID']
     response = route53.change_resource_record_sets(
         HostedZoneId=hosted_zone_id,
         ChangeBatch={
@@ -44,21 +43,18 @@ def ssh_command(host, username, private_key, command):
     logger.info(f"Connecting to {host} via SSH to run: {command}")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    key = paramiko.RSAKey.from_private_key(private_key)
+    key = paramiko.RSAKey.from_private_key_string(private_key)
     ssh.connect(host, username=username, pkey=key)
     stdin, stdout, stderr = ssh.exec_command(command)
     return stdout.read().decode(), stderr.read().decode()
 
 def renew_certificate():
     """Main process to renew Let's Encrypt certificate."""
-    logger.info("Starting certificate renewal process")
-    # Get Lightsail SSH details from Secrets Manager
-    lightsail_secret = get_secret("LIGHTSAIL_SECRET_NAME")
-    ssh_host = lightsail_secret['host']
-    ssh_user = lightsail_secret['user']
-    private_key_data = lightsail_secret['private_key']
-
-    private_key = paramiko.RSAKey.from_private_key_string(private_key_data)
+    secrets = get_environment_secrets()
+    ssh_host = secrets["host"]
+    ssh_user = secrets["user"]
+    private_key = secrets["private_key"]
+    hosted_zone_id = secrets["hosted_zone_id"]
 
     # Certbot command for DNS challenge
     certbot_command = "sudo certbot certonly --manual --preferred-challenges dns"
@@ -69,15 +65,13 @@ def renew_certificate():
     if stderr:
         logger.error(f"Certbot error: {stderr}")
 
-    # Extract DNS challenge details
-    # (You'll need to parse stdout to get the domain and TXT value)
-
+    # Extract DNS challenge details (mocked for now)
     domain = "example.com"
     txt_name = "_acme-challenge.example.com"
     txt_value = "sample-value"
 
     # Update Route 53 with the TXT record
-    update_route53(domain, txt_name, txt_value)
+    update_route53(domain, txt_name, txt_value, hosted_zone_id)
 
     # Wait for DNS propagation
     logger.info("Waiting for DNS propagation...")
